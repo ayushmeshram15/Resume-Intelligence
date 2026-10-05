@@ -1,0 +1,6 @@
+{
+  "name": "Resume Intelligence NLP Pipeline & Workbench",
+  "description": "End-to-end NLP resume parsing, spaCy + Regex entity extraction, sentence-transformer semantic matching, and weighted candidate ranking pipeline with interactive workbench and Streamlit codebase.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
