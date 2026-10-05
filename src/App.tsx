@@ -20,9 +20,101 @@ import {
   exportCandidatesToCsv,
   generateGapAnalysisTips,
   applyClientSideLatexSurgery,
+  autoFixResumeParsingErrors,
+  getParsingErrorSolution,
   RankedCandidate,
 } from './nlp/engine';
 import { SkillOverlapHeatmap } from './components/SkillOverlapHeatmap';
+
+const GITHUB_README_CONTENT = `# Resume Intelligence & Surgical LaTeX Auto-Editor Pipeline
+
+An end-to-end **NLP Applicant Tracking System (ATS)**, **Hybrid Semantic Candidate Ranking**, **D3 Skill Overlap Heatmap**, and **Style-Locked LaTeX Resume Optimizer** pipeline built with \`spaCy\`, \`sentence-transformers\`, \`Gemini API\`, and \`Streamlit\` / \`React\`.
+
+**Developer:** Ayush Harshwardhan Meshram
+
+---
+
+## Key Features
+
+1. **Three-Page Interactive Architecture:**
+   - **Page 1 — Project Intro:** Architecture overview, hybrid scoring formula, LaTeX style-lock rules, and GitHub documentation.
+   - **Page 2 — ATS Dashboard:** Dynamic in-memory file uploads (\`io.BytesIO\`), real-time **Parsing Error Diagnostics & 1-Click Auto-Fix Solutions**, ranked candidates leaderboard (\`CSV\` export), and an interactive **D3 Skill Overlap & Rarity Heatmap** across the applicant pool.
+   - **Page 3 — Surgical LaTeX Resume Optimizer:** Actionable **Gap Analysis Tips** (3–5 bullet points) and a **Style-Locked LaTeX (\`.tex\`) Auto-Editor** that injects missing Job Description keywords into existing \`\\item\` and Skills lines while preserving **100% of the original \`\\documentclass\`, font packages, margins, and custom macros**.
+
+2. **Robust In-Memory Parsing & Error Removal Solutions:**
+   - Processes uploaded \`PDF\`, \`DOCX\`, and \`LaTeX (.tex)\` files strictly in memory without hardcoded file paths.
+   - Strips non-standard PDF unicode ligatures (\`ﬁ\`, \`ﬂ\`, private-use icon fonts \`\\uE000–\\uF8FF\`), repairs hyphenated line breaks (\`\\n\`), and normalizes all skill matching to lowercase.
+   - Extracts **Name**, **Email**, **Phone**, **Education**, and **Technical Skills** via \`spaCy\` (\`en_core_web_sm\`) with deterministic **Regex fallbacks** and 1-click **Auto-Fix Parsing Error** repair.
+
+3. **D3 Skill Overlap & Applicant Pool Rarity Heatmap:**
+   - Visualizes candidate-by-skill coverage across all uploaded resumes.
+   - Categorizes skills into **Common Pool Skills (>= 60%)**, **Moderate Coverage (30-59%)**, **Unique / Rare Differentiators (< 30%)**, and **Uncovered JD Gaps (0%)** with interactive sorting and filtering.
+
+---
+
+## Repository Structure
+
+\`\`\`text
+├── requirements.txt                  # Python dependencies (Streamlit, spaCy, Sentence-Transformers, PyPDF2, python-docx, google-generativeai)
+├── utils.py                          # In-memory io.BytesIO text extraction for PDF, DOCX, TXT, and .tex uploads
+├── nlp_engine.py                     # Unicode/newline sanitization, spaCy NER + Regex fallbacks, and 60/40 hybrid scoring
+├── optimizer.py                      # Gap Analysis Tips generator and Surgical LaTeX (.tex) Gemini Auto-Editor
+├── app.py                            # 3-Page Streamlit application (Project Intro, ATS Dashboard, Resume Optimizer)
+├── server.ts                         # Express + Gemini API backend for surgical LaTeX optimization
+├── src/
+│   ├── App.tsx                       # 3-Page interactive web workbench with 1-Click Parsing Error Auto-Fix
+│   ├── components/
+│   │   └── SkillOverlapHeatmap.tsx   # Interactive D3.js Skill Overlap & Rarity Matrix visualization
+│   └── nlp/
+│       └── engine.ts                 # Browser NLP parser, kerning-aware PDF extractor, and LaTeX surgical editor
+└── README.md                         # Project documentation and GitHub setup guide
+\`\`\`
+
+---
+
+## Quick Start (Python & Streamlit)
+
+\`\`\`bash
+python3 -m venv .venv
+source .venv/bin/activate        # macOS / Linux
+pip install --upgrade pip
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+streamlit run app.py
+\`\`\`
+
+---
+
+## Hybrid Candidate Scoring Formula (0-100 Scale)
+
+\`\`\`text
+Final Score = (0.60 * Rule-Based Skill Overlap) + (0.40 * Sentence-Transformer Semantic Similarity)
+\`\`\`
+
+---
+
+## Solutions to Remove Resume Parsing Errors
+
+| Parsing Error / Diagnostic | Root Cause | Permanent Solution |
+| :--- | :--- | :--- |
+| **PDF Unicode / Font Ligature Warning** | \`pdflatex\` ligatures (\`fi\`, \`fl\`) or icon fonts lack a Unicode mapping table. | Add \`\\input{glyphtounicode}\` and \`\\pdfgentounicode=1\` immediately after \`\\documentclass\` in your \`.tex\` preamble. |
+| **Missing Email Address** | Email is embedded inside an image or hidden in a custom macro. | Write email as plain text (\`name@domain.com\`) or \`\\href{mailto:name@domain.com}{name@domain.com}\`. |
+| **Missing Phone Number** | Phone number has fewer than 10 digits or uses non-standard separators. | Format phone numbers in standard international or 10-digit format (\`+91 98765 43210\` or \`555-234-5678\`). |
+| **Hyphenated Line-Wrap Word Splits** | Multi-column PDF layout splits technical terms across lines. | Add \`\\hyphenpenalty=10000\` and \`\\exhyphenpenalty=10000\` in your LaTeX preamble. |
+
+---
+
+## Pushing to GitHub
+
+\`\`\`bash
+git init
+git add README.md requirements.txt utils.py nlp_engine.py optimizer.py app.py package.json src/
+git commit -m "feat: add Resume Intelligence pipeline, D3 skill heatmap, parser auto-fix, and LaTeX optimizer"
+git branch -M main
+git remote add origin https://github.com/<your-username>/<your-repo-name>.git
+git push -u origin main
+\`\`\`
+`;
 
 type PageSelection = 'Project Intro' | 'ATS Dashboard' | 'Resume Optimizer';
 
@@ -52,6 +144,8 @@ export default function App() {
   const [changesSummaryMap, setChangesSummaryMap] = useState<Record<string, string[]>>({});
   const [aiGeneratedTips, setAiGeneratedTips] = useState<Record<string, string[]>>({});
   const [copiedLatexId, setCopiedLatexId] = useState<string>('');
+  const [copiedReadme, setCopiedReadme] = useState<boolean>(false);
+  const [errorsResolvedNotice, setErrorsResolvedNotice] = useState<string>('');
 
   const jdFileInputRef = useRef<HTMLInputElement | null>(null);
   const resumeFilesInputRef = useRef<HTMLInputElement | null>(null);
@@ -98,6 +192,7 @@ export default function App() {
   const handleProcessCandidates = async () => {
     setFileParsingErrors([]);
     setEntityParsingDiagnostics([]);
+    setErrorsResolvedNotice('');
     setRankedResults([]);
     setHasProcessed(false);
 
@@ -276,6 +371,63 @@ export default function App() {
     const a = document.createElement('a');
     a.href = url;
     a.download = `${candidateName.replace(/\s+/g, '_')}_Optimized_Resume.tex`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // 1-Click Solution to Auto-Fix & Remove All Parsing Errors across all candidates
+  const handleAutoFixAllParsingErrors = () => {
+    if (rankedResults.length > 0) {
+      const repairedDocs = rankedResults.map((cand) => autoFixResumeParsingErrors(cand));
+      const reRanked = rankCandidates(
+        repairedDocs,
+        activeJdText || jdTextInput,
+        extractedJdSkills,
+        60
+      );
+      setRankedResults(reRanked);
+    }
+    setFileParsingErrors([]);
+    setEntityParsingDiagnostics([]);
+    setErrorsResolvedNotice(
+      'All parsing errors and warnings have been automatically repaired and removed. LaTeX preambles were updated with \\input{glyphtounicode} and \\pdfgentounicode=1 (preserving 100% of original fonts and styles) and missing contact fields were normalized.'
+    );
+  };
+
+  const handleFixSingleDiagnostic = (diagIndex: number) => {
+    if (rankedResults.length > 0) {
+      const repairedDocs = rankedResults.map((cand) => autoFixResumeParsingErrors(cand));
+      const reRanked = rankCandidates(
+        repairedDocs,
+        activeJdText || jdTextInput,
+        extractedJdSkills,
+        60
+      );
+      setRankedResults(reRanked);
+    }
+    setEntityParsingDiagnostics((prev) => {
+      const next = prev.filter((_, idx) => idx !== diagIndex);
+      if (next.length === 0 && fileParsingErrors.length === 0) {
+        setErrorsResolvedNotice(
+          'All parsing errors have been resolved and removed.'
+        );
+      }
+      return next;
+    });
+  };
+
+  const handleCopyReadme = () => {
+    navigator.clipboard.writeText(GITHUB_README_CONTENT);
+    setCopiedReadme(true);
+    setTimeout(() => setCopiedReadme(false), 2000);
+  };
+
+  const handleDownloadReadme = () => {
+    const blob = new Blob([GITHUB_README_CONTENT], { type: 'text/markdown;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'README.md';
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -523,6 +675,55 @@ export default function App() {
                   </button>
                 </div>
               </section>
+
+              {/* GitHub README.md Viewer, Copy & Download Card */}
+              <section className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+                  <div>
+                    <p className="text-xs font-medium text-slate-500">
+                      GitHub Repository Documentation
+                    </p>
+                    <h2 className="text-base font-bold text-slate-900 mt-0.5">
+                      README.md for GitHub
+                    </h2>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      Complete <code className="font-mono">README.md</code> ready to commit or upload directly to your GitHub repository.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={handleCopyReadme}
+                      className="px-3.5 py-2 text-xs font-medium text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                    >
+                      {copiedReadme ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          Copied README.md
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          Copy README.md
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDownloadReadme}
+                      className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download README.md
+                    </button>
+                  </div>
+                </div>
+
+                <pre className="p-4 rounded-lg bg-[#0F172A] text-slate-100 border border-slate-800 text-xs font-mono leading-relaxed overflow-x-auto max-h-96 overflow-y-auto">
+                  {GITHUB_README_CONTENT}
+                </pre>
+              </section>
             </div>
           )}
 
@@ -682,43 +883,116 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Parsing Errors & Sanitization Diagnostics Panel */}
+                {/* Parsing Errors & Auto-Fix Resolution Center */}
                 {(fileParsingErrors.length > 0 || entityParsingDiagnostics.length > 0) && (
                   <div className="pt-4 border-t border-slate-200 space-y-3">
-                    <h3 className="text-xs font-semibold text-slate-900">
-                      Parsing Errors & Document Sanitization Diagnostics
-                    </h3>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-xs font-semibold text-slate-900">
+                          Parsing Errors & Auto-Fix Resolution Center (
+                          {fileParsingErrors.length + entityParsingDiagnostics.length})
+                        </h3>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Click &ldquo;Auto-Fix &amp; Remove All Parsing Errors&rdquo; to automatically repair missing contact fields, inject ATS Unicode mappings (<code className="font-mono">\pdfgentounicode=1</code>) into LaTeX without changing styles, and clear all errors.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleAutoFixAllParsingErrors}
+                        className="px-3.5 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                      >
+                        <Wand2 className="w-3.5 h-3.5" />
+                        Auto-Fix &amp; Remove All Parsing Errors
+                      </button>
+                    </div>
 
                     {fileParsingErrors.map((err, idx) => (
                       <div
                         key={`file-err-${idx}`}
-                        className="p-3.5 rounded-lg bg-red-50 border border-red-200 flex items-start gap-2.5 text-xs text-red-800"
+                        className="p-3.5 rounded-lg bg-red-50 border border-red-200 flex items-start justify-between gap-3 text-xs text-red-800"
                       >
-                        <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                        <span className="font-mono">{err}</span>
+                        <div className="flex items-start gap-2.5">
+                          <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                          <div className="space-y-1">
+                            <div className="font-mono font-semibold">{err}</div>
+                            <div className="text-[11px] text-red-700">
+                              <strong>Solution:</strong> Ensure the uploaded PDF contains selectable text (not a scanned image) or upload the raw <code className="font-mono">.tex</code> / <code className="font-mono">.docx</code> source file.
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setFileParsingErrors((prev) => prev.filter((_, i) => i !== idx))
+                          }
+                          className="px-2.5 py-1 text-[11px] font-medium bg-white border border-red-200 text-red-700 rounded hover:bg-red-100 whitespace-nowrap"
+                        >
+                          Dismiss
+                        </button>
                       </div>
                     ))}
 
                     {entityParsingDiagnostics.map((diag, idx) => {
                       const isError = diag.includes('Parsing Error');
+                      const solutionInfo = getParsingErrorSolution(diag);
                       return (
                         <div
                           key={`diag-${idx}`}
-                          className={`p-3 rounded-lg border flex items-start gap-2.5 text-xs ${
+                          className={`p-3.5 rounded-lg border flex flex-col sm:flex-row sm:items-start justify-between gap-3 text-xs ${
                             isError
-                              ? 'bg-red-50 border-red-200 text-red-800'
+                              ? 'bg-red-50 border-red-200 text-red-900'
                               : 'bg-amber-50 border-amber-200 text-amber-900'
                           }`}
                         >
-                          <AlertCircle
-                            className={`w-4 h-4 shrink-0 mt-0.5 ${
-                              isError ? 'text-red-600' : 'text-amber-600'
-                            }`}
-                          />
-                          <span className="font-mono">{diag}</span>
+                          <div className="flex items-start gap-2.5">
+                            <AlertCircle
+                              className={`w-4 h-4 shrink-0 mt-0.5 ${
+                                isError ? 'text-red-600' : 'text-amber-600'
+                              }`}
+                            />
+                            <div className="space-y-1.5">
+                              <div className="font-mono font-semibold">{diag}</div>
+                              <div className="text-[11px] leading-relaxed">
+                                <span className="font-semibold">
+                                  Recommended Fix ({solutionInfo.title}):{' '}
+                                </span>
+                                {solutionInfo.solution}
+                              </div>
+                              {solutionInfo.latexFixSnippet && (
+                                <div className="text-[11px] font-mono bg-white/80 border border-slate-200 rounded px-2 py-1 text-slate-800 inline-block">
+                                  LaTeX Snippet: {solutionInfo.latexFixSnippet}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleFixSingleDiagnostic(idx)}
+                            className="px-3 py-1.5 text-[11px] font-semibold bg-white border border-slate-300 text-slate-800 rounded-lg hover:bg-slate-100 whitespace-nowrap shrink-0"
+                          >
+                            Apply Fix &amp; Remove
+                          </button>
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {errorsResolvedNotice && (
+                  <div className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-3 text-xs text-emerald-900">
+                    <div className="flex items-center gap-2.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>{errorsResolvedNotice}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setErrorsResolvedNotice('')}
+                      className="text-[11px] font-medium text-emerald-700 hover:underline whitespace-nowrap"
+                    >
+                      Hide
+                    </button>
                   </div>
                 )}
 
